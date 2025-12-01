@@ -1,9 +1,6 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import 'leaflet.markercluster/dist/MarkerCluster.css';
-import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
-import 'leaflet.markercluster';
 
 // Fix Leaflet default markers
 delete L.Icon.Default.prototype._getIconUrl;
@@ -43,20 +40,19 @@ const icons = {
 const Map = ({ items, type, onMapClick, selectedItem, onMarkerClick }) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
-  const markersClusterRef = useRef(null);
+  const markersLayerRef = useRef(null);
   const markersMapRef = useRef(new Map());
 
   // Initialize map
   useEffect(() => {
-    if (!mapInstanceRef.current) {
+    if (!mapInstanceRef.current && mapRef.current) {
       mapInstanceRef.current = L.map(mapRef.current).setView([21.15, -101.68], 13);
 
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '&copy; OpenStreetMap contributors',
       }).addTo(mapInstanceRef.current);
 
-      markersClusterRef.current = L.markerClusterGroup();
-      mapInstanceRef.current.addLayer(markersClusterRef.current);
+      markersLayerRef.current = L.layerGroup().addTo(mapInstanceRef.current);
     }
 
     return () => {
@@ -78,15 +74,17 @@ const Map = ({ items, type, onMapClick, selectedItem, onMarkerClick }) => {
     mapInstanceRef.current.on('click', handleClick);
 
     return () => {
-      mapInstanceRef.current.off('click', handleClick);
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.off('click', handleClick);
+      }
     };
   }, [onMapClick]);
 
   // Update markers
   useEffect(() => {
-    if (!markersClusterRef.current) return;
+    if (!markersLayerRef.current) return;
 
-    markersClusterRef.current.clearLayers();
+    markersLayerRef.current.clearLayers();
     markersMapRef.current.clear();
 
     items.forEach((item) => {
@@ -114,7 +112,7 @@ const Map = ({ items, type, onMapClick, selectedItem, onMarkerClick }) => {
         if (onMarkerClick) onMarkerClick(item);
       });
 
-      markersClusterRef.current.addLayer(marker);
+      markersLayerRef.current.addLayer(marker);
       markersMapRef.current.set(item._id, marker);
     });
   }, [items, type, onMarkerClick]);
