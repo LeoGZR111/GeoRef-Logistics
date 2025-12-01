@@ -26,11 +26,13 @@ const Dashboard = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' or 'table'
+  const [polygons, setPolygons] = useState([]);
 
   // Modal states
   const [modalOpen, setModalOpen] = useState(false);
   const [modalTitle, setModalTitle] = useState('');
-  const [modalMode, setModalMode] = useState('create'); // create or edit
+  const [modalMode, setModalMode] = useState('create');
   const [editingItem, setEditingItem] = useState(null);
   const [pendingLocation, setPendingLocation] = useState(null);
 
@@ -96,9 +98,20 @@ const Dashboard = () => {
     }
   }, [currentTab, user._id]);
 
+  // Load polygons
+  const loadPolygons = useCallback(async () => {
+    try {
+      const res = await polygonsService.getAll(user._id);
+      setPolygons(res.data);
+    } catch (err) {
+      console.error('Error loading polygons:', err);
+    }
+  }, [user._id]);
+
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadPolygons();
+  }, [loadData, loadPolygons]);
 
   // Filter items
   useEffect(() => {
@@ -190,26 +203,49 @@ const Dashboard = () => {
     document.body.style.cursor = 'default';
   };
 
-  // Handle edit
-  const handleEdit = (item) => {
+  // Handle edit (from card, table, or popup)
+  const handleEdit = (item, type = currentTab) => {
+    const prevTab = currentTab;
+    if (type !== currentTab) {
+      setCurrentTab(type);
+    }
     setEditingItem(item);
     setModalMode('edit');
     setFormData({ ...item });
-    setModalTitle(getModalTitle('edit'));
 
-    if (currentTab === 'deliveries') {
+    const titles = {
+      places: 'Editar Lugar',
+      place: 'Editar Lugar',
+      clients: 'Editar Cliente',
+      client: 'Editar Cliente',
+      deliveries: 'Editar Entrega',
+      delivery: 'Editar Entrega',
+      drivers: 'Editar Repartidor',
+      driver: 'Editar Repartidor',
+    };
+    setModalTitle(titles[type] || 'Editar');
+
+    if (type === 'deliveries' || type === 'delivery') {
       loadClients();
     }
 
     setModalOpen(true);
   };
 
-  // Handle delete
-  const handleDelete = async (item) => {
+  // Handle delete (from card, table, or popup)
+  const handleDelete = async (item, type = currentTab) => {
     if (!confirm('¿Eliminar este elemento?')) return;
 
     try {
-      switch (currentTab) {
+      const typeMap = {
+        place: 'places',
+        client: 'clients',
+        delivery: 'deliveries',
+        driver: 'drivers',
+      };
+      const actualType = typeMap[type] || type;
+
+      switch (actualType) {
         case 'places':
           await placesService.delete(item._id);
           break;
@@ -226,6 +262,25 @@ const Dashboard = () => {
       loadData();
     } catch (err) {
       alert(err.response?.data?.message || 'Error al eliminar');
+    }
+  };
+
+  // Handle polygon created
+  const handlePolygonCreated = async (coordinates) => {
+    const name = prompt('Nombre de la zona:');
+    if (!name) return;
+
+    try {
+      await polygonsService.create({
+        name,
+        description: '',
+        userId: user._id,
+        coordinates: [coordinates],
+      });
+      loadPolygons();
+      alert('Zona guardada correctamente');
+    } catch (err) {
+      alert(err.response?.data?.message || 'Error al guardar zona');
     }
   };
 
@@ -257,7 +312,15 @@ const Dashboard = () => {
             break;
         }
       } else {
-        switch (currentTab) {
+        const typeMap = {
+          place: 'places',
+          client: 'clients',
+          delivery: 'deliveries',
+          driver: 'drivers',
+        };
+        const actualTab = typeMap[currentTab] || currentTab;
+
+        switch (actualTab) {
           case 'places':
             await placesService.update(editingItem._id, formData);
             break;
@@ -292,9 +355,22 @@ const Dashboard = () => {
     setSelectedItem(item);
   };
 
+  // Get coordinates display
+  const getCoordinates = (item) => {
+    if (item.location?.coordinates) {
+      return `${item.location.coordinates[1].toFixed(4)}, ${item.location.coordinates[0].toFixed(4)}`;
+    }
+    if (item.currentLocation?.coordinates) {
+      return `${item.currentLocation.coordinates[1].toFixed(4)}, ${item.currentLocation.coordinates[0].toFixed(4)}`;
+    }
+    return '-';
+  };
+
   // Render form fields based on current tab
   const renderFormFields = () => {
-    switch (currentTab) {
+    const tab = currentTab.endsWith('s') ? currentTab : currentTab + 's';
+
+    switch (tab) {
       case 'places':
         return (
           <>
@@ -481,6 +557,164 @@ const Dashboard = () => {
     }
   };
 
+  // Render table headers based on current tab
+  const renderTableHeaders = () => {
+    switch (currentTab) {
+      case 'places':
+        return (
+          <tr>
+            <th>Nombre</th>
+            <th>Descripción</th>
+            <th>Latitud</th>
+            <th>Longitud</th>
+            <th>Acciones</th>
+          </tr>
+        );
+      case 'clients':
+        return (
+          <tr>
+            <th>Nombre</th>
+            <th>Dirección</th>
+            <th>Teléfono</th>
+            <th>Latitud</th>
+            <th>Longitud</th>
+            <th>Acciones</th>
+          </tr>
+        );
+      case 'deliveries':
+        return (
+          <tr>
+            <th>Descripción</th>
+            <th>Estado</th>
+            <th>Prioridad</th>
+            <th>Latitud</th>
+            <th>Longitud</th>
+            <th>Acciones</th>
+          </tr>
+        );
+      case 'drivers':
+        return (
+          <tr>
+            <th>Nombre</th>
+            <th>Vehículo</th>
+            <th>Capacidad</th>
+            <th>Latitud</th>
+            <th>Longitud</th>
+            <th>Acciones</th>
+          </tr>
+        );
+      default:
+        return null;
+    }
+  };
+
+  // Render table row based on current tab
+  const renderTableRow = (item) => {
+    const coords = item.location?.coordinates || item.currentLocation?.coordinates || [0, 0];
+    const lat = coords[1]?.toFixed(6) || '-';
+    const lng = coords[0]?.toFixed(6) || '-';
+
+    switch (currentTab) {
+      case 'places':
+        return (
+          <tr key={item._id} onClick={() => handleCardClick(item)} style={{ cursor: 'pointer' }}>
+            <td>{item.name}</td>
+            <td>{item.description || '-'}</td>
+            <td>{lat}</td>
+            <td>{lng}</td>
+            <td>
+              <button
+                className="btn-table-action edit"
+                onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+              >
+                Editar
+              </button>
+              <button
+                className="btn-table-action delete"
+                onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+              >
+                Eliminar
+              </button>
+            </td>
+          </tr>
+        );
+      case 'clients':
+        return (
+          <tr key={item._id} onClick={() => handleCardClick(item)} style={{ cursor: 'pointer' }}>
+            <td>{item.name}</td>
+            <td>{item.address || '-'}</td>
+            <td>{item.phone || '-'}</td>
+            <td>{lat}</td>
+            <td>{lng}</td>
+            <td>
+              <button
+                className="btn-table-action edit"
+                onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+              >
+                Editar
+              </button>
+              <button
+                className="btn-table-action delete"
+                onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+              >
+                Eliminar
+              </button>
+            </td>
+          </tr>
+        );
+      case 'deliveries':
+        return (
+          <tr key={item._id} onClick={() => handleCardClick(item)} style={{ cursor: 'pointer' }}>
+            <td>{item.description}</td>
+            <td>{item.status || 'pending'}</td>
+            <td>{item.priority || 'normal'}</td>
+            <td>{lat}</td>
+            <td>{lng}</td>
+            <td>
+              <button
+                className="btn-table-action edit"
+                onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+              >
+                Editar
+              </button>
+              <button
+                className="btn-table-action delete"
+                onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+              >
+                Eliminar
+              </button>
+            </td>
+          </tr>
+        );
+      case 'drivers':
+        return (
+          <tr key={item._id} onClick={() => handleCardClick(item)} style={{ cursor: 'pointer' }}>
+            <td>{item.name}</td>
+            <td>{item.vehicle || '-'}</td>
+            <td>{item.capacity || '-'}</td>
+            <td>{lat}</td>
+            <td>{lng}</td>
+            <td>
+              <button
+                className="btn-table-action edit"
+                onClick={(e) => { e.stopPropagation(); handleEdit(item); }}
+              >
+                Editar
+              </button>
+              <button
+                className="btn-table-action delete"
+                onClick={(e) => { e.stopPropagation(); handleDelete(item); }}
+              >
+                Eliminar
+              </button>
+            </td>
+          </tr>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="dashboard">
       {/* Map */}
@@ -489,6 +723,10 @@ const Dashboard = () => {
         type={currentTab === 'places' ? 'place' : currentTab.slice(0, -1)}
         onMapClick={interactionMode ? handleMapClick : null}
         selectedItem={selectedItem}
+        onEdit={handleEdit}
+        onDelete={handleDelete}
+        polygons={polygons}
+        onPolygonCreated={handlePolygonCreated}
       />
 
       {/* Status Bar */}
@@ -513,7 +751,7 @@ const Dashboard = () => {
             <input
               type="text"
               className="search-input"
-              placeholder="Buscar..."
+              placeholder="Buscar por nombre..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -531,6 +769,23 @@ const Dashboard = () => {
             ))}
           </div>
 
+          <div className="view-toggle">
+            <button
+              className={`btn-view ${viewMode === 'cards' ? 'active' : ''}`}
+              onClick={() => setViewMode('cards')}
+              title="Ver como cards"
+            >
+              <i className="ri-layout-grid-line"></i>
+            </button>
+            <button
+              className={`btn-view ${viewMode === 'table' ? 'active' : ''}`}
+              onClick={() => setViewMode('table')}
+              title="Ver como tabla"
+            >
+              <i className="ri-table-line"></i>
+            </button>
+          </div>
+
           <button className="btn-add" onClick={handleAdd}>
             <i className="ri-add-line"></i>
             Agregar
@@ -544,52 +799,77 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* Items List */}
-        <div className="places-horizontal-list">
-          {loading ? (
-            <div style={{ padding: '10px', color: '#64748b' }}>Cargando...</div>
-          ) : error ? (
-            <div style={{ padding: '10px', color: '#ef4444' }}>{error}</div>
-          ) : filteredItems.length === 0 ? (
-            <div style={{ padding: '10px', color: '#64748b' }}>No hay elementos</div>
-          ) : (
-            filteredItems.map((item) => {
-              const { title, desc } = getItemInfo(item);
-              return (
-                <div
-                  key={item._id}
-                  className="card-item"
-                  onClick={() => handleCardClick(item)}
-                >
-                  <div className="card-title">{title}</div>
-                  <div className="card-desc">{desc}</div>
-                  <div style={{ marginTop: '8px', display: 'flex', gap: '4px' }}>
-                    <button
-                      className="btn-small"
-                      style={{ background: '#3b82f6', fontSize: '0.7rem' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEdit(item);
-                      }}
-                    >
-                      Editar
-                    </button>
-                    <button
-                      className="btn-small"
-                      style={{ background: '#ef4444', fontSize: '0.7rem' }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(item);
-                      }}
-                    >
-                      Eliminar
-                    </button>
+        {/* Items List - Cards View */}
+        {viewMode === 'cards' && (
+          <div className="places-horizontal-list">
+            {loading ? (
+              <div style={{ padding: '10px', color: '#64748b' }}>Cargando...</div>
+            ) : error ? (
+              <div style={{ padding: '10px', color: '#ef4444' }}>{error}</div>
+            ) : filteredItems.length === 0 ? (
+              <div style={{ padding: '10px', color: '#64748b' }}>No hay elementos</div>
+            ) : (
+              filteredItems.map((item) => {
+                const { title, desc } = getItemInfo(item);
+                return (
+                  <div
+                    key={item._id}
+                    className="card-item"
+                    onClick={() => handleCardClick(item)}
+                  >
+                    <div className="card-title">{title}</div>
+                    <div className="card-desc">{desc}</div>
+                    <div className="card-coords">{getCoordinates(item)}</div>
+                    <div style={{ marginTop: '8px', display: 'flex', gap: '4px' }}>
+                      <button
+                        className="btn-small"
+                        style={{ background: '#3b82f6', fontSize: '0.7rem' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleEdit(item);
+                        }}
+                      >
+                        Editar
+                      </button>
+                      <button
+                        className="btn-small"
+                        style={{ background: '#ef4444', fontSize: '0.7rem' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(item);
+                        }}
+                      >
+                        Eliminar
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })
-          )}
-        </div>
+                );
+              })
+            )}
+          </div>
+        )}
+
+        {/* Items List - Table View */}
+        {viewMode === 'table' && (
+          <div className="table-container">
+            {loading ? (
+              <div style={{ padding: '10px', color: '#64748b', textAlign: 'center' }}>Cargando...</div>
+            ) : error ? (
+              <div style={{ padding: '10px', color: '#ef4444', textAlign: 'center' }}>{error}</div>
+            ) : filteredItems.length === 0 ? (
+              <div style={{ padding: '10px', color: '#64748b', textAlign: 'center' }}>No hay elementos</div>
+            ) : (
+              <table className="data-table">
+                <thead>
+                  {renderTableHeaders()}
+                </thead>
+                <tbody>
+                  {filteredItems.map((item) => renderTableRow(item))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Modal */}

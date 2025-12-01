@@ -1,11 +1,23 @@
 import { useEffect, useRef } from 'react';
 
-const Map = ({ items = [], type, onMapClick, selectedItem, onMarkerClick }) => {
+const Map = ({
+  items = [],
+  type,
+  onMapClick,
+  selectedItem,
+  onMarkerClick,
+  onEdit,
+  onDelete,
+  polygons = [],
+  onPolygonCreated
+}) => {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersLayerRef = useRef(null);
+  const polygonsLayerRef = useRef(null);
   const markersMapRef = useRef(new window.Map());
   const LRef = useRef(null);
+  const drawControlRef = useRef(null);
 
   // Initialize map
   useEffect(() => {
@@ -15,6 +27,10 @@ const Map = ({ items = [], type, onMapClick, selectedItem, onMarkerClick }) => {
       // Dynamic import of Leaflet
       const L = await import('leaflet');
       await import('leaflet/dist/leaflet.css');
+
+      // Import Leaflet Draw
+      await import('leaflet-draw/dist/leaflet.draw.css');
+      await import('leaflet-draw');
 
       LRef.current = L.default || L;
 
@@ -33,6 +49,49 @@ const Map = ({ items = [], type, onMapClick, selectedItem, onMarkerClick }) => {
       }).addTo(mapInstanceRef.current);
 
       markersLayerRef.current = LRef.current.layerGroup().addTo(mapInstanceRef.current);
+      polygonsLayerRef.current = LRef.current.layerGroup().addTo(mapInstanceRef.current);
+
+      // Add draw control
+      const drawnItems = new LRef.current.FeatureGroup();
+      mapInstanceRef.current.addLayer(drawnItems);
+
+      drawControlRef.current = new LRef.current.Control.Draw({
+        draw: {
+          polyline: false,
+          rectangle: false,
+          circle: false,
+          marker: false,
+          circlemarker: false,
+          polygon: {
+            allowIntersection: false,
+            showArea: true,
+            shapeOptions: {
+              color: '#6366f1',
+              fillOpacity: 0.3
+            }
+          }
+        },
+        edit: {
+          featureGroup: drawnItems,
+          remove: false,
+          edit: false
+        }
+      });
+      mapInstanceRef.current.addControl(drawControlRef.current);
+
+      // Handle polygon created
+      mapInstanceRef.current.on(LRef.current.Draw.Event.CREATED, (e) => {
+        const layer = e.layer;
+        if (e.layerType === 'polygon') {
+          const latlngs = layer.getLatLngs()[0];
+          const coords = latlngs.map(p => [p.lng, p.lat]);
+          if (coords.length > 0) coords.push(coords[0]); // Close ring
+
+          if (onPolygonCreated) {
+            onPolygonCreated(coords);
+          }
+        }
+      });
     };
 
     initMap();
@@ -116,8 +175,65 @@ const Map = ({ items = [], type, onMapClick, selectedItem, onMarkerClick }) => {
         desc = item.address || item.description || item.status || '';
       }
 
-      const marker = L.marker([lat, lng], { icon: icons[type] || icons.place })
-        .bindPopup(`<b>${title}</b><br>${desc}`);
+      // Create popup content with edit/delete buttons
+      const popupContent = document.createElement('div');
+      popupContent.innerHTML = `
+        <div style="min-width: 150px;">
+          <h4 style="margin: 0 0 8px 0; font-size: 14px;">${title}</h4>
+          <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">${desc}</p>
+          <p style="margin: 0 0 12px 0; font-size: 11px; color: #999;">
+            Lat: ${lat.toFixed(6)}<br>
+            Lng: ${lng.toFixed(6)}
+          </p>
+          <div style="display: flex; gap: 8px;">
+            <button id="edit-btn-${item._id}" style="
+              background: #3b82f6;
+              color: white;
+              border: none;
+              padding: 6px 12px;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 12px;
+            ">Editar</button>
+            <button id="delete-btn-${item._id}" style="
+              background: #ef4444;
+              color: white;
+              border: none;
+              padding: 6px 12px;
+              border-radius: 4px;
+              cursor: pointer;
+              font-size: 12px;
+            ">Eliminar</button>
+          </div>
+        </div>
+      `;
+
+      const marker = L.marker([lat, lng], { icon: icons[type] || icons.place });
+
+      const popup = L.popup().setContent(popupContent);
+      marker.bindPopup(popup);
+
+      // Add event listeners after popup opens
+      marker.on('popupopen', () => {
+        const editBtn = document.getElementById(`edit-btn-${item._id}`);
+        const deleteBtn = document.getElementById(`delete-btn-${item._id}`);
+
+        if (editBtn) {
+          editBtn.onclick = (e) => {
+            e.stopPropagation();
+            marker.closePopup();
+            if (onEdit) onEdit(item, type);
+          };
+        }
+
+        if (deleteBtn) {
+          deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            marker.closePopup();
+            if (onDelete) onDelete(item, type);
+          };
+        }
+      });
 
       marker.on('click', () => {
         if (onMarkerClick) onMarkerClick(item);
@@ -126,7 +242,27 @@ const Map = ({ items = [], type, onMapClick, selectedItem, onMarkerClick }) => {
       markersLayerRef.current.addLayer(marker);
       markersMapRef.current.set(item._id, marker);
     });
-  }, [items, type, onMarkerClick]);
+  }, [items, type, onMarkerClick, onEdit, onDelete]);
+
+  // Update polygons
+  useEffect(() => {
+    if (!polygonsLayerRef.current || !LRef.current) return;
+
+    const L = LRef.current;
+    polygonsLayerRef.current.clearLayers();
+
+    polygons.forEach((polygon) => {
+      if (polygon.area?.coordinates) {
+        const coords = polygon.area.coordinates[0].map(coord => [coord[1], coord[0]]);
+        const poly = L.polygon(coords, {
+          color: '#6366f1',
+          fillOpacity: 0.2,
+          weight: 2
+        }).bindPopup(`<b>${polygon.name}</b>`);
+        polygonsLayerRef.current.addLayer(poly);
+      }
+    });
+  }, [polygons]);
 
   // Center on selected item
   useEffect(() => {
